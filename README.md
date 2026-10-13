@@ -1,6 +1,6 @@
 # Baltimore Municipal Intelligence Engine (BMIE)
 
-A high-performance data analytics tool built in **Rust** that looks at Baltimore police misconduct settlements and crime incident records, processes them super fast using multi-threading, and shows the insights through both a terminal CLI and a clean web dashboard.
+A high performance data analytics tool built in **Rust** that looks at Baltimore police misconduct settlements and crime incident records, processes them super fast using multi threading, and shows the insights through both a terminal CLI and a clean web dashboard.
 
 ---
 
@@ -17,7 +17,7 @@ City leaders need a clear way to see how police misconduct and settlement payout
 
 ## How It's Built (The Tech Stack)
 
-* **Rust:** The whole core engine is written in Rust so it's crazy fast, memory-safe, and doesn't crash or lag.
+* **Rust:** The core engine is written in Rust so it's fast, memorysafe, and doesn't crash or lag.
 * **Concurrency (Tokio & Rayon):** Instead of processing data one row at a time, it uses **Tokio** to handle background tasks and **Rayon** to split the heavy lifting across multiple CPU cores at once.
 * **Clean Code Patterns:** 
   * **Pipeline:** Data flows smoothly step-by-step from raw files $\rightarrow$ parsing $\rightarrow$ matching $\rightarrow$ analysis.

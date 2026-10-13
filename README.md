@@ -29,6 +29,7 @@ City leaders need a clear way to see how police misconduct and settlement payout
 
 ## Project Layout
 
+
 ```text
 baltimore_intelligence/
 ├── Cargo.toml          # Project config and package dependencies

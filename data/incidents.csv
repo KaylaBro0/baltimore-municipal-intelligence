@@ -1,0 +1,4 @@
+incident_id,officer_id,incident_date,district,unit,shift,crime_type,latitude,longitude
+INC-101,OFF-001,2020-03-15,Western,Western,Day,Assault,39.2904,-76.6122
+INC-102,OFF-002,2021-07-22,Central,Central,Evening,Robbery,39.2990,-76.6100
+INC-103,OFF-001,2022-11-05,Western,Western,Night,Burglary,39.2850,-76.6200

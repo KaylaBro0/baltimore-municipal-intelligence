@@ -1,0 +1,4 @@
+officer_id,officer_name,amount_usd,settlement_date,unit,district,case_type,report_year,discipline_year
+OFF-001,John Doe,150000.0,2021-05-12,Western,Western,Civil Rights,2020,2022
+OFF-002,Jane Smith,75000.0,2022-08-19,Central,Central,Misconduct,2021,2023
+OFF-001,John Doe,50000.0,2023-01-10,Western,Western,Excessive Force,2022,2023

@@ -59,7 +59,7 @@ curl --proto '=https' --tlsv1.2 -sSf [https://sh.rustup.rs](https://sh.rustup.rs
 Follow the on-screen prompts (pressing 1 for default installation). Once installed, reload your terminal profile:
 
 Bash
-source ".cargo/env"
+source "$HOME/.cargo/env"
 Verify the compiler is active:
 
 Bash

@@ -5,32 +5,46 @@ use crate::{
 };
 use std::collections::HashMap;
 
-/// Joins by the stable officer identifier. Each matching settlement/incident
-/// pair is retained; absent identity linkage is never inferred from names.
+/// Joins the officer-cost and crime datasets by district when a district exists,
+/// otherwise it falls back to the configured district filter and retains the
+/// cross-dataset relation in a bounded, zero-copy way.
 pub fn join<'a>(
     settlements: &'a [Settlement],
     incidents: &'a [Incident],
     config: &QueryConfig,
 ) -> Vec<JoinedRecord<'a>> {
-    let mut index: HashMap<&str, Vec<&Incident>> = HashMap::new();
+    let mut index: HashMap<String, Vec<&Incident>> = HashMap::new();
 
     for incident in incidents {
+        if !config.matches_district(&incident.district) {
+            continue;
+        }
         index
-            .entry(&incident.officer_id)
+            .entry(incident.district.clone())
             .or_default()
             .push(incident);
     }
 
     let partials = parallel_map(settlements, |settlement| {
-        if !config.matches_district(&settlement.district) {
+        if settlement.total_cost() < config.min_settlement_usd() {
             return Vec::new();
         }
 
-        index
-            .get(settlement.officer_id.as_str())
-            .into_iter()
+        let district_keys = match settlement.district.as_deref() {
+            Some(district) => vec![district.to_string()],
+            None => {
+                if let Some(district) = config.district_name() {
+                    vec![district.to_string()]
+                } else {
+                    index.keys().cloned().collect()
+                }
+            }
+        };
+
+        district_keys
+            .iter()
+            .filter_map(|district| index.get(district))
             .flatten()
-            .filter(|incident| config.matches_district(&incident.district))
             .map(|incident| JoinedRecord {
                 settlement,
                 incident,

@@ -1,7 +1,7 @@
 use crate::models::{Incident, Settlement};
 use anyhow::{Context, Result};
 use rayon::join;
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::{Path, PathBuf}, process::Command};
 
 #[derive(Debug)]
 pub struct Sources {
@@ -28,6 +28,22 @@ fn fetch(url: &str) -> Result<Vec<u8>> {
         String::from_utf8_lossy(&output.stderr)
     );
     Ok(output.stdout)
+}
+
+fn resolve_dataset_path(base_dir: &Path, preferred_names: &[&str], fallback_names: &[&str]) -> PathBuf {
+    for name in preferred_names {
+        let candidate = base_dir.join(name);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    for name in fallback_names {
+        let candidate = base_dir.join(name);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    base_dir.join(preferred_names[0])
 }
 
 fn load_dataset<T: for<'de> serde::Deserialize<'de>>(
@@ -58,6 +74,7 @@ fn parse_csv<T: for<'de> serde::Deserialize<'de>>(
 ) -> Result<Vec<T>> {
     let mut reader = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
+        .flexible(true)
         .from_reader(bytes);
     reader
         .deserialize()
@@ -72,12 +89,20 @@ pub fn load_all(
     settlement_url: Option<&str>,
     incident_url: Option<&str>,
 ) -> Result<(Vec<Settlement>, Vec<Incident>, Sources)> {
-    let gttf = dir.join("gttf.csv");
-    let gis = dir.join("incidents.csv");
+    let settlement_path = resolve_dataset_path(
+        dir,
+        &["gttf_tracker_officer_costs.csv", "gttf.csv"],
+        &["data/gttf.csv", "data/gttf_tracker_officer_costs.csv"],
+    );
+    let incident_path = resolve_dataset_path(
+        dir,
+        &["NIBRS_GroupA_Crime_Data_1100291637803527672.csv", "incidents.csv"],
+        &["data/incidents.csv", "data/NIBRS_GroupA_Crime_Data_1100291637803527672.csv"],
+    );
 
     let (settlements_result, incidents_result) = join(
-        || load_dataset::<Settlement>(&gttf, settlement_url, "settlements"),
-        || load_dataset::<Incident>(&gis, incident_url, "incidents"),
+        || load_dataset::<Settlement>(&settlement_path, settlement_url, "settlements"),
+        || load_dataset::<Incident>(&incident_path, incident_url, "incidents"),
     );
 
     let (settlements, settlements_source) = settlements_result?;

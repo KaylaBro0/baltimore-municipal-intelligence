@@ -1,29 +1,105 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Settlement {
-    pub officer_id: String,
+    #[serde(default)]
+    pub officer_id: Option<String>,
+    #[serde(rename = "officer_name", alias = "officer_name")]
     pub officer_name: String,
+    #[serde(default, rename = "cumulative_settlement_cost_usd")]
+    pub cumulative_settlement_cost_usd: f64,
+    #[serde(default, rename = "amount_usd")]
     pub amount_usd: f64,
-    pub settlement_date: String,
-    pub unit: String,
-    pub district: String,
-    pub case_type: String,
-    pub report_year: i32,
+    #[serde(default)]
+    pub settlement_date: Option<String>,
+    #[serde(default)]
+    pub unit: Option<String>,
+    #[serde(default, alias = "New_District", alias = "district")]
+    pub district: Option<String>,
+    #[serde(default)]
+    pub case_type: Option<String>,
+    #[serde(default)]
+    pub report_year: Option<i32>,
+    #[serde(default)]
     pub discipline_year: Option<i32>,
+    #[serde(default)]
+    pub tracker_cases_settled: Option<u32>,
+    #[serde(default)]
+    pub tracker_total_paid_usd: Option<f64>,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default, rename = "image_capture_date")]
+    pub image_capture_date: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+impl Settlement {
+    pub fn total_cost(&self) -> f64 {
+        if self.cumulative_settlement_cost_usd > 0.0 {
+            self.cumulative_settlement_cost_usd
+        } else {
+            self.amount_usd
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Incident {
-    pub incident_id: String,
-    pub officer_id: String,
-    pub incident_date: String,
+    #[serde(default, rename = "RowID")]
+    pub row_id: Option<String>,
+    #[serde(default)]
+    pub cc_number: Option<String>,
+    #[serde(rename = "CrimeDateTime", alias = "incident_date")]
+    pub crime_date_time: String,
+    #[serde(rename = "CrimeCode", alias = "crime_type")]
+    pub crime_code: String,
+    #[serde(rename = "Description", alias = "description")]
+    pub description: String,
+    #[serde(default, rename = "Inside_Outside")]
+    pub inside_outside: Option<String>,
+    #[serde(default)]
+    pub weapon: Option<String>,
+    #[serde(default)]
+    pub shooting: Option<String>,
+    #[serde(default)]
+    pub post: Option<String>,
+    #[serde(default)]
+    pub gender: Option<String>,
+    #[serde(default)]
+    pub age: Option<i32>,
+    #[serde(default)]
+    pub race: Option<String>,
+    #[serde(default)]
+    pub ethnicity: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default, rename = "Old_District")]
+    pub old_district: Option<String>,
+    #[serde(default, rename = "New_District", alias = "district")]
     pub district: String,
-    pub unit: String,
-    pub shift: String,
-    pub crime_type: String,
-    pub latitude: f64,
-    pub longitude: f64,
+    #[serde(default)]
+    pub neighborhood: Option<String>,
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
+    #[serde(default)]
+    pub geo_location: Option<String>,
+    #[serde(default)]
+    pub premise_type: Option<String>,
+    #[serde(default)]
+    pub total_incidents: Option<i32>,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub incident_id: Option<String>,
+    #[serde(default)]
+    pub officer_id: Option<String>,
+    #[serde(default)]
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub shift: Option<String>,
 }
 
 #[derive(Debug, Clone)]

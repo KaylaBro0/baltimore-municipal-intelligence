@@ -45,3 +45,4 @@ baltimore_intelligence/
     ├── pipeline.rs     # Matches records together safely without copying heavy data
     ├── analysis.rs     # The logic and math for all 5 research questions
     └── ui.rs           # Renders the terminal output and ASCII charts
+    

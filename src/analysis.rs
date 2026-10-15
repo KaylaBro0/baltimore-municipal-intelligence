@@ -1,24 +1,38 @@
 use crate::models::{Incident, JoinedRecord, Metric, Report, Settlement};
+use chrono::{Datelike, NaiveDate, NaiveDateTime};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Default)]
 pub struct QueryConfig {
     district: Option<String>,
+    min_settlement_usd: f64,
 }
 
 pub struct QueryBuilder {
     district: Option<String>,
+    min_settlement_usd: f64,
 }
 
 impl QueryConfig {
     pub fn builder() -> QueryBuilder {
-        QueryBuilder { district: None }
+        QueryBuilder {
+            district: None,
+            min_settlement_usd: 0.0,
+        }
     }
 
     pub fn matches_district(&self, district: &str) -> bool {
         self.district
             .as_deref()
-            .map_or(true, |d| d.eq_ignore_ascii_case(district))
+            .map_or(true, |filter| filter.eq_ignore_ascii_case(district))
+    }
+
+    pub fn district_name(&self) -> Option<&str> {
+        self.district.as_deref()
+    }
+
+    pub fn min_settlement_usd(&self) -> f64 {
+        self.min_settlement_usd
     }
 }
 
@@ -28,9 +42,15 @@ impl QueryBuilder {
         self
     }
 
+    pub fn settlement_threshold(mut self, threshold: f64) -> Self {
+        self.min_settlement_usd = threshold;
+        self
+    }
+
     pub fn build(self) -> QueryConfig {
         QueryConfig {
             district: self.district,
+            min_settlement_usd: self.min_settlement_usd,
         }
     }
 }
@@ -51,6 +71,65 @@ struct Timeline;
 struct Recurrence;
 struct Risk;
 
+fn parse_year(raw: &str) -> Option<i32> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    for fmt in [
+        "%Y-%m-%d",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y",
+        "%Y/%m/%d",
+    ] {
+        if let Ok(date) = NaiveDate::parse_from_str(trimmed, fmt) {
+            return Some(date.year());
+        }
+        if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, fmt) {
+            return Some(dt.year());
+        }
+    }
+
+    None
+}
+
+fn incident_counts_by_district(incidents: &[Incident], config: &QueryConfig) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for incident in incidents {
+        if !config.matches_district(&incident.district) {
+            continue;
+        }
+        *counts.entry(incident.district.clone()).or_default() += 1;
+    }
+    counts
+}
+
+fn district_cost_weighting(
+    settlements: &[Settlement],
+    incidents: &[Incident],
+    config: &QueryConfig,
+) -> HashMap<String, f64> {
+    let counts = incident_counts_by_district(incidents, config);
+    let total_incidents = counts.values().sum::<usize>() as f64;
+    let total_settlement: f64 = settlements
+        .iter()
+        .filter(|row| row.total_cost() >= config.min_settlement_usd())
+        .map(|row| row.total_cost())
+        .sum();
+
+    let mut weighted: HashMap<String, f64> = HashMap::new();
+    if total_incidents > 0.0 && total_settlement > 0.0 {
+        for (district, count) in counts {
+            let share = total_settlement * (count as f64 / total_incidents);
+            weighted.insert(district, share);
+        }
+    }
+
+    weighted
+}
+
 impl AnalysisStrategy for DistrictCost {
     fn calculate(
         &self,
@@ -59,59 +138,93 @@ impl AnalysisStrategy for DistrictCost {
         _: &[JoinedRecord<'_>],
         config: &QueryConfig,
     ) -> Vec<Metric> {
-        let mut costs: BTreeMap<&str, f64> = BTreeMap::new();
+        let counts = incident_counts_by_district(incidents, config);
+        let weighted_costs = district_cost_weighting(settlements, incidents, config);
 
-        for settlement in settlements
-            .iter()
-            .filter(|row| config.matches_district(&row.district))
-        {
-            *costs.entry(&settlement.district).or_default() += settlement.amount_usd;
-        }
-
-        let mut counts: HashMap<&str, usize> = HashMap::new();
-
-        for incident in incidents
-            .iter()
-            .filter(|row| config.matches_district(&row.district))
-        {
-            *counts.entry(&incident.district).or_default() += 1;
-        }
-
-        for district in counts.keys() {
-            costs.entry(district).or_default();
-        }
-
-        costs
+        let mut metrics: Vec<_> = counts
             .into_iter()
-            .map(|(district, amount)| Metric {
-                label: district.into(),
-                value: amount,
-                detail: format!(
-                    "${amount:.0} settlements; {} incidents",
-                    counts.get(district).copied().unwrap_or(0)
-                ),
+            .map(|(district, count)| {
+                let cost = weighted_costs.get(&district).copied().unwrap_or(0.0);
+                Metric {
+                    label: district.clone(),
+                    value: cost,
+                    detail: format!("${cost:.0} modeled cost; {count} incidents"),
+                }
             })
-            .collect()
+            .collect();
+
+        metrics.sort_by(|a, b| b.value.total_cmp(&a.value));
+        metrics
     }
 }
 
 impl AnalysisStrategy for UnitHotspots {
     fn calculate(
         &self,
-        _: &[Settlement],
-        _: &[Incident],
+        settlements: &[Settlement],
+        incidents: &[Incident],
         joined: &[JoinedRecord<'_>],
-        _: &QueryConfig,
+        config: &QueryConfig,
     ) -> Vec<Metric> {
         let mut groups: HashMap<String, (usize, f64, HashSet<String>)> = HashMap::new();
+        let district_costs = district_cost_weighting(settlements, incidents, config);
+        let incident_counts = incident_counts_by_district(incidents, config);
 
-        for row in joined {
-            let group = groups
-                .entry(format!("{} / {}", row.incident.unit, row.incident.shift))
-                .or_default();
-            group.0 += 1;
-            group.1 += row.settlement.amount_usd;
-            group.2.insert(row.incident.incident_id.clone());
+        if joined.is_empty() {
+            for incident in incidents {
+                if !config.matches_district(&incident.district) {
+                    continue;
+                }
+                let label = format!(
+                    "{} / {}",
+                    incident
+                        .neighborhood
+                        .clone()
+                        .unwrap_or_else(|| incident.district.clone()),
+                    incident.description.clone()
+                );
+                let group = groups.entry(label).or_default();
+                group.0 += 1;
+                let district_cost = district_costs.get(&incident.district).copied().unwrap_or(0.0);
+                let district_count = incident_counts.get(&incident.district).copied().unwrap_or(1) as f64;
+                group.1 += if district_count > 0.0 {
+                    district_cost / district_count
+                } else {
+                    0.0
+                };
+                group.2.insert(
+                    incident
+                        .incident_id
+                        .clone()
+                        .or_else(|| incident.row_id.clone())
+                        .unwrap_or_else(|| incident.crime_code.clone()),
+                );
+            }
+        } else {
+            for row in joined {
+                if row.settlement.total_cost() < config.min_settlement_usd() {
+                    continue;
+                }
+
+                let label = format!(
+                    "{} / {}",
+                    row.incident
+                        .neighborhood
+                        .clone()
+                        .unwrap_or_else(|| row.incident.district.clone()),
+                    row.incident.description.clone()
+                );
+                let group = groups.entry(label).or_default();
+                group.0 += 1;
+                group.1 += row.settlement.total_cost();
+                group.2.insert(
+                    row.incident
+                        .incident_id
+                        .clone()
+                        .or_else(|| row.incident.row_id.clone())
+                        .unwrap_or_else(|| row.incident.crime_code.clone()),
+                );
+            }
         }
 
         let mut metrics: Vec<_> = groups
@@ -120,7 +233,7 @@ impl AnalysisStrategy for UnitHotspots {
                 label,
                 value: pairs as f64,
                 detail: format!(
-                    "{pairs} matched pairs, {} distinct incidents, ${payout:.0} associated payout",
+                    "{pairs} flagged records, {} distinct objects, ${payout:.0} modeled cost",
                     incident_ids.len()
                 ),
             })
@@ -136,30 +249,43 @@ impl AnalysisStrategy for Timeline {
     fn calculate(
         &self,
         settlements: &[Settlement],
-        _: &[Incident],
+        incidents: &[Incident],
         _: &[JoinedRecord<'_>],
         config: &QueryConfig,
     ) -> Vec<Metric> {
         let mut years: BTreeMap<i32, (usize, usize)> = BTreeMap::new();
 
-        for settlement in settlements
-            .iter()
-            .filter(|row| config.matches_district(&row.district))
-        {
-            years.entry(settlement.report_year).or_default().0 += 1;
-
-            if let Some(year) = settlement.discipline_year {
-                years.entry(year).or_default().1 += 1;
+        for settlement in settlements {
+            if settlement.total_cost() < config.min_settlement_usd() {
+                continue;
             }
+            if let Some(district) = settlement.district.as_deref() {
+                if !config.matches_district(district) {
+                    continue;
+                }
+            }
+            let year = settlement
+                .report_year
+                .or_else(|| settlement.settlement_date.as_deref().and_then(parse_year))
+                .or_else(|| settlement.image_capture_date.as_deref().and_then(parse_year))
+                .unwrap_or_default();
+            let entry = years.entry(year).or_default();
+            entry.0 += 1;
+        }
+
+        for incident in incidents.iter().filter(|row| config.matches_district(&row.district)) {
+            let year = parse_year(&incident.crime_date_time).unwrap_or_default();
+            let entry = years.entry(year).or_default();
+            entry.1 += 1;
         }
 
         years
             .into_iter()
-            .map(|(year, (reports, actions))| Metric {
+            .map(|(year, (settlements_count, incidents_count))| Metric {
                 label: year.to_string(),
-                value: reports as f64,
+                value: settlements_count as f64,
                 detail: format!(
-                    "{reports} modeled misconduct reports; {actions} modeled disciplinary actions"
+                    "{settlements_count} settlement records; {incidents_count} crime records"
                 ),
             })
             .collect()
@@ -170,26 +296,24 @@ impl AnalysisStrategy for Recurrence {
     fn calculate(
         &self,
         settlements: &[Settlement],
-        incidents: &[Incident],
+        _incidents: &[Incident],
         _: &[JoinedRecord<'_>],
         config: &QueryConfig,
     ) -> Vec<Metric> {
-        let mut counts: HashMap<&str, (usize, f64)> = HashMap::new();
+        let mut counts: HashMap<String, (usize, f64)> = HashMap::new();
 
-        for settlement in settlements
-            .iter()
-            .filter(|row| config.matches_district(&row.district))
-        {
-            let entry = counts.entry(&settlement.officer_id).or_default();
+        for settlement in settlements {
+            if settlement.total_cost() < config.min_settlement_usd() {
+                continue;
+            }
+            if let Some(district) = settlement.district.as_deref() {
+                if !config.matches_district(district) {
+                    continue;
+                }
+            }
+            let entry = counts.entry(settlement.officer_name.clone()).or_default();
             entry.0 += 1;
-            entry.1 += settlement.amount_usd;
-        }
-
-        for incident in incidents
-            .iter()
-            .filter(|row| config.matches_district(&row.district))
-        {
-            counts.entry(&incident.officer_id).or_default().0 += 1;
+            entry.1 += settlement.total_cost();
         }
 
         let total_cost: f64 = counts.values().map(|value| value.1).sum();
@@ -201,17 +325,12 @@ impl AnalysisStrategy for Recurrence {
 
         let mut metrics: Vec<_> = counts
             .into_iter()
-            .filter(|(_, value)| value.0 > 1)
-            .map(|(officer_id, (records, cost))| Metric {
-                label: officer_id.into(),
-                value: records as f64,
+            .map(|(officer, (records, cost))| Metric {
+                label: officer,
+                value: cost,
                 detail: format!(
-                    "{records} source records; ${cost:.0} modeled settlement cost; {:.1}x mean officer cost",
-                    if mean_cost > 0.0 {
-                        cost / mean_cost
-                    } else {
-                        0.0
-                    }
+                    "{records} settlement records; ${cost:.0} total; {:.1}x mean officer cost",
+                    if mean_cost > 0.0 { cost / mean_cost } else { 0.0 }
                 ),
             })
             .collect();
@@ -230,47 +349,26 @@ impl AnalysisStrategy for Risk {
         _: &[JoinedRecord<'_>],
         config: &QueryConfig,
     ) -> Vec<Metric> {
-        let mut districts: HashMap<&str, (f64, usize)> = HashMap::new();
+        let counts = incident_counts_by_district(incidents, config);
+        let weighted_costs = district_cost_weighting(settlements, incidents, config);
+        let mut districts: HashMap<String, (f64, usize)> = HashMap::new();
 
-        for settlement in settlements
-            .iter()
-            .filter(|row| config.matches_district(&row.district))
-        {
-            districts
-                .entry(&settlement.district)
-                .or_default()
-                .0 += settlement.amount_usd;
+        for (district, count) in counts {
+            let cost = weighted_costs.get(&district).copied().unwrap_or(0.0);
+            districts.insert(district, (cost, count));
         }
 
-        for incident in incidents
-            .iter()
-            .filter(|row| config.matches_district(&row.district))
-        {
-            districts.entry(&incident.district).or_default().1 += 1;
-        }
-
-        let max_cost = districts
-            .values()
-            .map(|value| value.0)
-            .fold(0.0, f64::max)
-            .max(1.0);
-        let max_incidents = districts
-            .values()
-            .map(|value| value.1)
-            .max()
-            .unwrap_or(1)
-            .max(1) as f64;
+        let max_cost = districts.values().map(|value| value.0).fold(0.0, f64::max).max(1.0);
+        let max_incidents = districts.values().map(|value| value.1).max().unwrap_or(1).max(1) as f64;
 
         let mut metrics: Vec<_> = districts
             .into_iter()
             .map(|(district, (cost, incidents))| {
-                let score = 100.0
-                    * (0.6 * cost / max_cost + 0.4 * incidents as f64 / max_incidents);
-
+                let score = 100.0 * (0.6 * cost / max_cost + 0.4 * incidents as f64 / max_incidents);
                 Metric {
-                    label: district.into(),
+                    label: district,
                     value: score,
-                    detail: format!("{score:.1}/100; ${cost:.0} liability, {incidents} incidents"),
+                    detail: format!("{score:.1}/100; ${cost:.0} modeled cost, {incidents} incidents"),
                 }
             })
             .collect();
@@ -300,6 +398,6 @@ pub fn run_all(
         q3: strategies[2].calculate(settlements, incidents, joined, config),
         q4: strategies[3].calculate(settlements, incidents, joined, config),
         q5: strategies[4].calculate(settlements, incidents, joined, config),
-        caveat: "Demonstration inputs are synthetic. Statistics are descriptive and do not establish causal relationships. A joined row uses officer_id supplied in both files; district, unit, and calendar-year comparisons depend on the supplied normalized fields.".into(),
+        caveat: "These analyses combine the uploaded NIBRS crime data with officer settlement costs. Results are descriptive summaries for operational reviews and should be validated against the final source records and any district mapping rules before making policy decisions.".into(),
     }
 }

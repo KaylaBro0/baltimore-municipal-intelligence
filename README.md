@@ -45,4 +45,51 @@ baltimore_intelligence/
     ├── pipeline.rs     # Matches records together safely without copying heavy data
     ├── analysis.rs     # The logic and math for all 5 research questions
     └── ui.rs           # Renders the terminal output and ASCII charts
-    
+
+
+## macOS Compilation, Execution, & Verification Guide
+
+Follow these exact steps to compile, run, and verify the application on a macOS environment (tested on Apple Silicon and Intel Macs).
+
+### Step 1: Install Rust (if not already installed)
+Open your macOS **Terminal** and run the official `rustup` installer script:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf [https://sh.rustup.rs](https://sh.rustup.rs) | sh
+Bash
+source "$HOME/.cargo/env"
+Verification: Run cargo --version to confirm the Rust compiler is active.
+
+Step 2: Navigate to the Project Directory
+Open your terminal and change into the project folder:
+
+Bash
+cd /path/to/baltimore_intelligence
+Step 3: Compile the Project
+Build the optimized release binary using Cargo:
+
+Bash
+cargo build --release
+Verification: Look for the Finished release [optimized] target(s) message. The compiled executable will be located at target/release/bmie.
+
+Step 4: Execute the Application
+You can run the application directly through Cargo or via the automation script:
+
+Run all default analytics:
+
+Bash
+cargo run --release
+Run with district filtering (e.g., Western District):
+
+Bash
+cargo run --release -- --district Western
+Run via the shell script:
+
+Bash
+./run.sh
+Step 5: Verify the Output
+Terminal Verification: Confirm that the application outputs the header (Baltimore Municipal Intelligence Engine), displays the record counts (46 settlements, 278,239 incidents), and renders all 5 research question sections with ASCII bar charts (█).
+
+Web Dashboard Verification: Open the companion visual dashboard in your default browser:
+
+Bash
+open index.html
